@@ -19,17 +19,14 @@
    ========================================================= */
 
 const APP_VERSION = '1.0';
-const DATA_SCHEMA_VERSION = 1;
-const BACKUP_FORMAT_VERSION = 1;
 
 const APP_CHANGELOG = [
-    '1.0: Rebuilt the data foundation with a versioned schema, stable program/session/exercise identity, structured exercise metadata, migration-ready backups, and safer import normalization.',
-    '3.6 beta: Fixed the Home View Workout action, improved Open Current Program, added configurable week-start day, separated New Program tools, and added the built-in 7-Day Program Builder.',
-    '3.5.2 beta: Added Future Program creation, editable program names, and Showed Up status.',
-    '3.5.1 beta: Added dashboard update notices, workout start/completion times, Home navigation, Secondary/Future programs, ChatGPT instructions, View Log fixes, and safer Add Weights saving.',
-    '3.5 beta: Added protected exercise controls, dashboard/program management, OLED mode, Metric/Imperial measurements, body metrics, and workout image sharing.',
-    '3.4.1 beta: Added Add Weights / Reps for historical dates without changing workout status.',
-    '3.4 beta: Rebranded the app to GymEssentials, added Day/Night modes, preserved unfinished workouts, improved history, prior-performance guidance, and repeated-exercise progression.'
+    '3.4.0: Rebranded GymEssentials, added Day/Night modes, preserved unfinished workouts, improved weekly history drill-down, historical read-only days, prior-performance guidance, repeated-exercise progression, and shared Lat Pulldown progression history.',
+    '3.4.1: Added Add Weights / Reps for historical dates without changing workout status.',
+    '3.5: Added protected exercise Done/Edit controls, safer completion checks, dashboard startup, program management, OLED mode, Metric/Imperial measurements, richer body metrics, and workout image sharing.',
+    '3.5.1: Added dashboard update notices, workout start/completion times, separate Home navigation, Secondary and Future programs, beginner-friendly ChatGPT instructions, View Log fixes, and safer Add Weights saving.',
+    '3.5.2: Added cumulative Notable Changes, Future Program creation from the New Program screen, editable program names, and a positive Showed Up status for workouts intentionally finished with some exercises unlogged.',
+    '3.6: Fixed the Home View Workout action, verified and improved Open Current Program, moved program management into an options submenu, added configurable week-start day, separated New Program tools, and added a built-in 7-Day Program Builder.'
 ];
 
 const NOTABLE_CHANGES = [
@@ -69,7 +66,7 @@ const NOTABLE_CHANGES = [
 
 
 const STORAGE_KEYS = {
-    APP: 'workoutTrackerApp',
+    APP: 'gymEssentialsV1App',
     SETTINGS: 'workoutTrackerSettings'
 };
 
@@ -486,22 +483,12 @@ const DEFAULT_PROGRAM = {
    ========================================================= */
 
 function exercise(id, name, target, type = 'strength') {
-    const safeId = id || generateId('exercise');
     return {
-        id: safeId,
-        libraryId: createExerciseLibraryId(name, safeId),
+        id,
         name,
         target,
         type,
-        enabled: true,
-        primaryMuscle: '',
-        secondaryMuscles: [],
-        movementPattern: '',
-        equipment: [],
-        difficulty: '',
-        instructions: [],
-        commonMistakes: [],
-        media: []
+        enabled: true
     };
 }
 
@@ -529,12 +516,10 @@ let configuredWeekStartDay = 'monday';
 
 let appState = {
     version: APP_VERSION,
-    dataSchemaVersion: DATA_SCHEMA_VERSION,
     program: deepClone(DEFAULT_PROGRAM),
     currentDay: getTodayKey(),
     sessions: {},
     settings: {
-        dataSchemaVersion: DATA_SCHEMA_VERSION,
         activeView: 'day',
         theme: 'night',
         unitSystem: 'imperial',
@@ -543,7 +528,6 @@ let appState = {
         heightInches: '',
         bodyFatSex: '',
         activeProgramId: 'current',
-        currentProgramId: 'program-current',
         programLibrary: [],
         dashboardDismissed: false,
         weightEntryMode: false,
@@ -576,149 +560,8 @@ function getThemeLabel() {
     return appState.settings.theme === 'day' ? 'Day' : 'Night';
 }
 
-/* =========================================================
-   VERSION 1.0 DATA FOUNDATION
-   ========================================================= */
-
-function slugifyExerciseName(name) {
-    return String(name || '').toLowerCase().trim().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'exercise';
-}
-
-function createExerciseLibraryId(name, fallbackId = '') {
-    const slug = slugifyExerciseName(name);
-    return slug === 'exercise' && fallbackId ? `custom-${String(fallbackId).replace(/[^a-zA-Z0-9_-]/g, '-')}` : slug;
-}
-
-function normalizeExerciseDefinition(raw) {
-    const source = raw && typeof raw === 'object' ? raw : {};
-    const name = String(source.name || 'Unnamed Exercise').trim();
-    const id = String(source.id || generateId('exercise'));
-    return {
-        ...source,
-        id,
-        libraryId: String(source.libraryId || createExerciseLibraryId(name, id)),
-        name,
-        target: source.target ?? '',
-        type: source.type || 'strength',
-        enabled: source.enabled !== false,
-        primaryMuscle: source.primaryMuscle || '',
-        secondaryMuscles: Array.isArray(source.secondaryMuscles) ? source.secondaryMuscles : [],
-        movementPattern: source.movementPattern || '',
-        equipment: Array.isArray(source.equipment) ? source.equipment : [],
-        difficulty: source.difficulty || '',
-        instructions: Array.isArray(source.instructions) ? source.instructions : [],
-        commonMistakes: Array.isArray(source.commonMistakes) ? source.commonMistakes : [],
-        media: Array.isArray(source.media) ? source.media : []
-    };
-}
-
-function normalizeProgramDays(days) {
-    if (!days || typeof days !== 'object') return {};
-    const normalized = {};
-    Object.entries(days).forEach(([dayKey, rawDay]) => {
-        if (!rawDay || typeof rawDay !== 'object') return;
-        const day = deepClone(rawDay);
-        day.id = String(day.id || dayKey);
-        day.name = day.name || dayKey;
-        day.shortName = day.shortName || String(day.name).slice(0, 3).toUpperCase();
-        day.icon = day.icon || '🏋️';
-        day.title = day.title || 'Workout';
-        day.subtitle = day.subtitle || '';
-        day.type = day.type || 'strength';
-        day.sections = Array.isArray(day.sections) ? day.sections : [];
-        day.sections.forEach(section => {
-            section.id = String(section.id || generateId('section'));
-            section.name = section.name || 'Workout';
-            if (section.type === 'checks') section.checks = Array.isArray(section.checks) ? section.checks : [];
-            else section.exercises = Array.isArray(section.exercises) ? section.exercises.map(normalizeExerciseDefinition) : [];
-        });
-        normalized[dayKey] = day;
-    });
-    return normalized;
-}
-
-function normalizeSessionRecord(raw, key) {
-    const source = raw && typeof raw === 'object' ? raw : {};
-    const session = {
-        ...source,
-        id: String(source.id || key),
-        programId: source.programId || (source.programSlot === 'secondary' ? 'secondary' : 'program-current'),
-        programSlot: source.programSlot === 'secondary' ? 'secondary' : 'current',
-        dayId: source.dayId || '',
-        date: source.date || '',
-        values: source.values && typeof source.values === 'object' ? source.values : {},
-        checks: source.checks && typeof source.checks === 'object' ? source.checks : {},
-        exerciseRecords: source.exerciseRecords && typeof source.exerciseRecords === 'object' ? source.exerciseRecords : {},
-        notes: source.notes || '',
-        started: Boolean(source.started), completed: Boolean(source.completed), partial: Boolean(source.partial), missed: Boolean(source.missed), incomplete: Boolean(source.incomplete),
-        startedAt: source.startedAt || null, completedAt: source.completedAt || null, missedAt: source.missedAt || null, incompleteAt: source.incompleteAt || null,
-        workoutSnapshot: source.workoutSnapshot || null, replacementDayId: source.replacementDayId || null,
-        weight: source.weight ?? '', waist: source.waist ?? '',
-        doneExercises: source.doneExercises && typeof source.doneExercises === 'object' ? source.doneExercises : {},
-        exerciseEditBackups: source.exerciseEditBackups && typeof source.exerciseEditBackups === 'object' ? source.exerciseEditBackups : {}
-    };
-    Object.entries(session.values).forEach(([exerciseId, value]) => {
-        const existing = session.exerciseRecords[exerciseId] || {};
-        session.exerciseRecords[exerciseId] = { ...existing, exerciseId: existing.exerciseId || exerciseId, libraryId: existing.libraryId || '', value, recordedAt: existing.recordedAt || null };
-    });
-    return session;
-}
-
-function normalizeAppStateForV1(rawState) {
-    const source = rawState && typeof rawState === 'object' ? deepClone(rawState) : {};
-    const defaults = { ...appState.settings };
-    const normalized = {
-        ...appState,
-        ...source,
-        version: APP_VERSION,
-        dataSchemaVersion: DATA_SCHEMA_VERSION,
-        program: normalizeProgramDays(source.program || DEFAULT_PROGRAM),
-        sessions: {},
-        settings: { ...defaults, ...(source.settings || {}), dataSchemaVersion: DATA_SCHEMA_VERSION }
-    };
-    normalized.settings.currentProgramId = normalized.settings.currentProgramId || 'program-current';
-    normalized.settings.programLibrary = Array.isArray(normalized.settings.programLibrary) ? normalized.settings.programLibrary.map(program => ({ ...program, id: program.id || generateId('program'), days: normalizeProgramDays(program.days || {}) })) : [];
-    for (const slot of ['secondaryProgram','futureProgram']) {
-        const program = normalized.settings[slot];
-        normalized.settings[slot] = program && typeof program === 'object' ? { ...program, id: program.id || generateId('program'), days: normalizeProgramDays(program.days || {}) } : null;
-    }
-    Object.entries(source.sessions || {}).forEach(([key, session]) => normalized.sessions[key] = normalizeSessionRecord(session, key));
-    normalized.currentDay = getTodayKey();
-    return normalized;
-}
-
-function prepareStateForSave() {
-    appState = normalizeAppStateForV1(appState);
-}
-
-function buildBackupPayload() {
-    return {
-        backupType: 'GymEssentials Backup',
-        backupVersion: BACKUP_FORMAT_VERSION,
-        appVersion: APP_VERSION,
-        dataSchemaVersion: DATA_SCHEMA_VERSION,
-        exportedAt: new Date().toISOString(),
-        data: deepClone(normalizeAppStateForV1(appState))
-    };
-}
-
-function parseAndNormalizeBackup(raw) {
-    if (!raw || typeof raw !== 'object') throw new Error('Invalid backup file.');
-    const candidate = raw.data && typeof raw.data === 'object' ? raw.data : raw;
-    if (!candidate.program && !candidate.sessions && !candidate.settings) throw new Error('This file does not contain GymEssentials data.');
-    return { sourceVersion: raw.appVersion || candidate.version || 'Unknown', backupVersion: raw.backupVersion || 0, exportedAt: raw.exportedAt || null, data: normalizeAppStateForV1(candidate) };
-}
-
-function describeBackupForImport(parsed) {
-    const sessions = Object.keys(parsed.data.sessions || {}).length;
-    const programs = 1 + (parsed.data.settings.secondaryProgram ? 1 : 0) + (parsed.data.settings.futureProgram ? 1 : 0) + parsed.data.settings.programLibrary.length;
-    const exported = parsed.exportedAt ? new Date(parsed.exportedAt).toLocaleString() : 'Unknown';
-    return `GymEssentials backup\n\nSource app version: ${parsed.sourceVersion}\nBackup version: ${parsed.backupVersion}\nExported: ${exported}\nPrograms found: ${programs}\nWorkout sessions: ${sessions}\n\nImport this backup? Existing local data will be replaced.`;
-}
-
 function saveApp() {
     try {
-        prepareStateForSave();
         localStorage.setItem(
             STORAGE_KEYS.APP,
             JSON.stringify(appState)
@@ -777,8 +620,7 @@ function loadApp() {
         appState.settings.secondaryProgram = appState.settings.secondaryProgram && typeof appState.settings.secondaryProgram === 'object' ? appState.settings.secondaryProgram : null;
         appState.settings.futureProgram = appState.settings.futureProgram && typeof appState.settings.futureProgram === 'object' ? appState.settings.futureProgram : null;
         configuredWeekStartDay = appState.settings.weekStartDay || 'monday';
-        appState = normalizeAppStateForV1(appState);
-        appState.settings.activeView = 'dashboard';
+
         applyTheme();
         reconcileMissedDays();
         saveApp();
@@ -899,13 +741,11 @@ function getSession(dayId, dateKey = getDateKey()) {
     if (!appState.sessions[key]) {
         appState.sessions[key] = {
             id: key,
-            programId: appState.settings.programViewSlot === 'secondary' && appState.settings.secondaryProgram ? appState.settings.secondaryProgram.id : (appState.settings.currentProgramId || 'program-current'),
             programSlot: appState.settings.programViewSlot === 'secondary' ? 'secondary' : 'current',
             dayId,
             date: dateKey,
             values: {},
             checks: {},
-            exerciseRecords: {},
             notes: '',
             started: false,
             completed: false,
@@ -933,10 +773,6 @@ function getSession(dayId, dateKey = getDateKey()) {
         if (typeof session.incomplete !== 'boolean') session.incomplete = false;
         if (!session.values) session.values = {};
         if (!session.checks) session.checks = {};
-        if (!session.exerciseRecords) session.exerciseRecords = {};
-        Object.entries(session.values).forEach(([exerciseId, value]) => {
-            session.exerciseRecords[exerciseId] = { ...(session.exerciseRecords[exerciseId] || {}), exerciseId, value, recordedAt: session.exerciseRecords[exerciseId]?.recordedAt || null };
-        });
         if (!('notes' in session)) session.notes = '';
         if (!('startedAt' in session)) session.startedAt = null;
         if (!('completedAt' in session)) session.completedAt = null;
@@ -2284,7 +2120,7 @@ function openProgramCreator() {
                 archiveCurrentProgram(false);
                 appState.program = days;
                 appState.settings.currentProgramName = name;
-                appState.settings.activeProgramId = 'current'; appState.settings.currentProgramId = generateId('program');
+                appState.settings.activeProgramId = 'current';
                 appState.settings.activeView = 'dashboard';
                 saveApp(); render(); showToast(`${name} is now active`);
             }
@@ -2410,7 +2246,7 @@ function renderDashboard(container) {
     dashboard.querySelector('#dashboard-future-rename')?.addEventListener('click', () => openProgramNameEditor('future'));
     dashboard.querySelector('#dashboard-secondary-future')?.addEventListener('click', () => {
         if (future) {
-            openConfirmModal({title:'Activate future program?',message:`Activating “${future.name}” will archive your Current Program and make the Future Program your new Current Program. Your workout history will be preserved. Do you want to replace the Current Program?`,confirmText:'Yes, Replace Current Program',onConfirm:()=>{archiveCurrentProgram(false);appState.program=deepClone(future.days);appState.settings.currentProgramName=future.name;appState.settings.activeProgramId='current';appState.settings.currentProgramId=generateId('program');appState.settings.secondaryProgram=null;appState.settings.futureProgram=null;appState.settings.programViewSlot='current';saveApp();render();showToast(`${future.name} is now the Current Program`);}});
+            openConfirmModal({title:'Activate future program?',message:`Activating “${future.name}” will archive your Current Program and make the Future Program your new Current Program. Your workout history will be preserved. Do you want to replace the Current Program?`,confirmText:'Yes, Replace Current Program',onConfirm:()=>{archiveCurrentProgram(false);appState.program=deepClone(future.days);appState.settings.currentProgramName=future.name;appState.settings.activeProgramId='current';appState.settings.secondaryProgram=null;appState.settings.futureProgram=null;appState.settings.programViewSlot='current';saveApp();render();showToast(`${future.name} is now the Current Program`);}});
         } else openProgramSlotCreator('future');
     });
     dashboard.querySelector('#dashboard-chat-instructions').addEventListener('click', openChatGPTInstructions);
@@ -4070,53 +3906,124 @@ function openAbout() {
 }
 
 function exportData() {
-    try {
-        const backup = buildBackupPayload();
-        const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const anchor = document.createElement('a');
-        anchor.href = url;
-        anchor.download = `gymessentials-backup-${getDateKey()}.json`;
-        document.body.appendChild(anchor);
-        anchor.click();
-        anchor.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
-        showToast('Backup exported');
-    } catch (error) {
-        console.error('GymEssentials export failed:', error);
-        alert('Could not create the backup file.');
-    }
+    const backup = {
+        exportedAt:
+            new Date().toISOString(),
+
+        appVersion:
+            APP_VERSION,
+
+        data:
+            appState
+    };
+
+    const blob =
+        new Blob(
+            [
+                JSON.stringify(
+                    backup,
+                    null,
+                    2
+                )
+            ],
+            {
+                type:
+                    'application/json'
+            }
+        );
+
+    const url =
+        URL.createObjectURL(blob);
+
+    const anchor =
+        document.createElement('a');
+
+    anchor.href = url;
+
+    anchor.download =
+        `gymessentials-backup-${getDateKey()}.json`;
+
+    anchor.click();
+
+    URL.revokeObjectURL(url);
+
+    showToast('Backup exported');
 }
 
 function handleImport(event) {
-    const file = event.target.files?.[0];
+    const file =
+        event.target.files[0];
+
     if (!file) return;
-    const reader = new FileReader();
+
+    const reader =
+        new FileReader();
+
     reader.onload = () => {
         try {
-            const raw = JSON.parse(reader.result);
-            const parsed = parseAndNormalizeBackup(raw);
-            if (!confirm(describeBackupForImport(parsed))) return;
-            appState = parsed.data;
+            const backup =
+                JSON.parse(
+                    reader.result
+                );
+
+            if (!backup.data) {
+                throw new Error(
+                    'Invalid backup'
+                );
+            }
+
+            if (
+                !confirm(
+                    'Import this backup? Existing data will be replaced.'
+                )
+            ) {
+                return;
+            }
+
+            appState = backup.data;
             appState.version = APP_VERSION;
-            appState.dataSchemaVersion = DATA_SCHEMA_VERSION;
+
+            if (!appState.program) {
+                appState.program =
+                    deepClone(DEFAULT_PROGRAM);
+            }
+
+            if (!appState.sessions) {
+                appState.sessions = {};
+            }
+
+            appState.settings = {
+                activeView: 'day',
+                theme: 'night',
+                firstUseDate:
+                    appState.settings &&
+                    appState.settings.firstUseDate
+                        ? appState.settings.firstUseDate
+                        : getDateKey(),
+                ...(appState.settings || {})
+            };
+
             appState.currentDay = getTodayKey();
-            appState.settings.activeView = 'dashboard';
             appState.settings.weightEntryMode = false;
             appState.settings.weightEntryDayId = null;
             appState.settings.weightEntryDateKey = null;
-            appState.settings.weightEntryBackupValues = null;
+
             reconcileMissedDays();
             saveApp();
             render();
-            showToast('Backup imported');
+
+            showToast(
+                'Backup imported'
+            );
         } catch (error) {
-            alert(`Could not import this backup file.\n\n${error.message || 'Invalid backup.'}\n\nYour existing data was not changed.`);
-            console.error('GymEssentials import failed:', error);
-        } finally {
-            if (event?.target) event.target.value = '';
+            alert(
+                'Could not import this backup file.'
+            );
+
+            console.error(error);
         }
     };
+
     reader.readAsText(file);
 }
 
@@ -4360,19 +4267,239 @@ document.addEventListener(
 );
 
 
+
+
 /* =========================================================
-   INITIALIZATION
+   GYMESSENTIALS 1.0 — PLATFORM ARCHITECTURE / UI
    ========================================================= */
 
-document.addEventListener(
-    'DOMContentLoaded',
-    () => {
-        loadApp();
-        render();
-        registerServiceWorker();
+const DATA_SCHEMA_VERSION = 1;
+const BACKUP_FORMAT_VERSION = 1;
+const V1_STORAGE_KEY = 'gymEssentialsV1App';
+const V1_NAV = ['home','today','programs','library','more'];
 
-        console.log(
-            `GymEssentials ${APP_VERSION}`
-        );
+function v1Clone(value){ return value == null ? value : JSON.parse(JSON.stringify(value)); }
+function v1Slug(value){ return String(value||'').toLowerCase().trim().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,80); }
+function v1Id(prefix='id'){ return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2,9)}`; }
+function v1Exercise(ex){
+    const id = ex.id || v1Id('exercise');
+    const libraryId = ex.libraryId || v1Slug(ex.name) || id;
+    return {
+        ...v1Clone(ex), id, libraryId,
+        primaryMuscle: ex.primaryMuscle || '', secondaryMuscles: Array.isArray(ex.secondaryMuscles)?ex.secondaryMuscles:[],
+        movementPattern: ex.movementPattern || '', equipment: Array.isArray(ex.equipment)?ex.equipment:[],
+        difficulty: ex.difficulty || '', instructions: ex.instructions || '', commonMistakes: Array.isArray(ex.commonMistakes)?ex.commonMistakes:[],
+        media: Array.isArray(ex.media)?ex.media:[]
+    };
+}
+function v1NormalizeDays(days){
+    const out={}; const order=['monday','tuesday','wednesday','thursday','friday','saturday','sunday'];
+    order.forEach(dayId=>{
+        const d=days?.[dayId]; if(!d) return;
+        const day=v1Clone(d); day.id=day.id||dayId; day.name=day.name||dayId[0].toUpperCase()+dayId.slice(1); day.shortName=day.shortName||day.name.slice(0,3).toUpperCase(); day.icon=day.icon||'🏋️'; day.sections=Array.isArray(day.sections)?day.sections:[];
+        day.sections=day.sections.map(section=>({ ...section, id:section.id||v1Id('section'), name:section.name||'Workout', exercises:Array.isArray(section.exercises)?section.exercises.map(v1Exercise):[] }));
+        out[dayId]=day;
+    });
+    return out;
+}
+function v1MakeProgram({id,name,kind='user',source='User',days,description='',createdAt=null,archivedAt=null}){
+    return { id:id||v1Id('program'), name:name||'My Program', kind, source, description, createdAt:createdAt||new Date().toISOString(), archivedAt:archivedAt||null, days:v1NormalizeDays(days||{}) };
+}
+function v1Programs(){ return Array.isArray(appState.programs) ? appState.programs : (Array.isArray(appState.settings.programs) ? appState.settings.programs : []); }
+function v1ActiveRecord(){ return v1Programs().find(p=>p.id===appState.settings.activeProgramId) || v1Programs()[0] || null; }
+function v1SyncActive(){
+    appState.programs = v1Programs();
+    const p=v1ActiveRecord(); if(!p) return;
+    p.days=v1NormalizeDays(appState.program); p.name=appState.settings.currentProgramName||p.name;
+    appState.program=p.days;
+    appState.programs=v1Programs();
+    appState.activeProgramId=p.id;
+    appState.settings.activeProgramId=p.id;
+    appState.settings.programs=appState.programs;
+}
+function v1SyncLegacyFields(){
+    const p=v1ActiveRecord();
+    if(!p) return;
+    appState.program=p.days;
+    appState.settings.currentProgramName=p.name;
+    appState.activeProgramId=p.id; appState.settings.activeProgramId=p.id;
+    appState.settings.programViewSlot='current';
+    appState.settings.secondaryProgram=null;
+    appState.settings.futureProgram=null;
+}
+
+/* 1.0 deliberately starts with a clean storage namespace. The 3.6 beta
+   remains untouched, while its original program becomes a normal program
+   object marked as the app's original/legacy program. */
+function loadApp(){
+    const saved=localStorage.getItem(V1_STORAGE_KEY);
+    if(!saved){
+        const legacy=v1MakeProgram({id:'original-program',name:'Original Program',kind:'legacy',source:'ChatGPT',description:'The original GymEssentials program that inspired the app.',days:DEFAULT_PROGRAM});
+        appState={
+            version:APP_VERSION, schemaVersion:DATA_SCHEMA_VERSION, activeProgramId:legacy.id, programs:[legacy], program:v1Clone(legacy.days), currentDay:getTodayKey(), sessions:{},
+            settings:{ activeView:'home', theme:'night', unitSystem:'imperial', firstUseDate:getDateKey(), heightFeet:'', heightInches:'', bodyFatSex:'',
+                activeProgramId:legacy.id, currentProgramName:legacy.name, programs:[legacy], archivedPrograms:[], dashboardDismissed:false,
+                weightEntryMode:false,weightEntryDayId:null,weightEntryDateKey:null,weightEntryBackupValues:null, programViewSlot:'current',secondaryProgram:null,futureProgram:null,
+                weekStartDay:'monday', dataSchemaVersion:DATA_SCHEMA_VERSION
+            }
+        };
+        saveApp(); applyTheme(); return;
     }
-);
+    try{
+        const parsed=JSON.parse(saved);
+        const programs=Array.isArray(parsed.settings?.programs)?parsed.settings.programs:[];
+        const normalizedPrograms=programs.map(p=>v1MakeProgram({...p,days:p.days}));
+        appState={
+            version:APP_VERSION,schemaVersion:DATA_SCHEMA_VERSION,activeProgramId:parsed.activeProgramId||parsed.settings?.activeProgramId||normalizedPrograms[0]?.id||'',programs:normalizedPrograms,program:v1Clone(parsed.program||{}),currentDay:getTodayKey(),sessions:parsed.sessions||{},
+            settings:{activeView:'home',theme:'night',unitSystem:'imperial',firstUseDate:getDateKey(),heightFeet:'',heightInches:'',bodyFatSex:'',
+                activeProgramId:parsed.activeProgramId||parsed.settings?.activeProgramId||normalizedPrograms[0]?.id||'',currentProgramName:parsed.settings?.currentProgramName||normalizedPrograms[0]?.name||'Original Program',
+                programs:normalizedPrograms,archivedPrograms:Array.isArray(parsed.settings?.archivedPrograms)?parsed.settings.archivedPrograms:[],dashboardDismissed:false,
+                weightEntryMode:false,weightEntryDayId:null,weightEntryDateKey:null,weightEntryBackupValues:null,programViewSlot:'current',secondaryProgram:null,futureProgram:null,
+                weekStartDay:parsed.settings?.weekStartDay||'monday',dataSchemaVersion:DATA_SCHEMA_VERSION,...(parsed.settings||{})}
+        };
+        if(!appState.programs.length){ appState.programs=[v1MakeProgram({id:'original-program',name:'Original Program',kind:'legacy',source:'ChatGPT',days:DEFAULT_PROGRAM})]; appState.activeProgramId='original-program'; }
+        appState.settings.programs=appState.programs; appState.settings.activeProgramId=appState.activeProgramId;
+        v1SyncLegacyFields(); reconcileMissedDays(); saveApp(); applyTheme();
+    }catch(e){ console.error('Could not load GymEssentials 1.0 data',e); localStorage.removeItem(V1_STORAGE_KEY); location.reload(); }
+}
+function saveApp(){
+    try{ v1SyncActive(); appState.version=APP_VERSION; appState.schemaVersion=DATA_SCHEMA_VERSION; appState.settings.dataSchemaVersion=DATA_SCHEMA_VERSION; localStorage.setItem(V1_STORAGE_KEY,JSON.stringify(appState)); }
+    catch(e){ console.error('Could not save GymEssentials 1.0 data',e); }
+}
+function getActiveProgram(){ return appState.program; }
+function getActiveProgramName(){ return appState.settings.currentProgramName || 'Original Program'; }
+function getProgramName(){ return getActiveProgramName(); }
+
+function v1SetView(view){ appState.settings.activeView=view; saveApp(); render(); window.scrollTo({top:0,behavior:'instant'}); }
+function v1GoToday(){ appState.currentDay=getTodayKey(); v1SetView('today'); }
+
+function renderHeader(container){
+    const header=document.createElement('header'); header.className='v1-header';
+    const p=v1ActiveRecord();
+    header.innerHTML=`<div class="v1-brand"><div class="v1-brand-mark">GE</div><div><h1>GymEssentials</h1><p>${escapeHtml(p?.name||'Your workout app')}</p></div></div><button class="v1-header-action" id="v1-header-today" aria-label="Go to today">Today</button>`;
+    header.querySelector('#v1-header-today').addEventListener('click',v1GoToday); container.appendChild(header);
+}
+function renderBottomNavigation(container){
+    const footer=document.createElement('footer'); footer.className='v1-bottom-nav';
+    const labels=[['home','⌂','Home'],['today','✓','Today'],['programs','▦','Programs'],['library','▤','Library'],['more','•••','More']];
+    footer.innerHTML=labels.map(([id,icon,label])=>`<button type="button" class="v1-nav-item ${appState.settings.activeView===id?'active':''}" data-v1-nav="${id}"><span>${icon}</span><small>${label}</small></button>`).join('');
+    footer.querySelectorAll('[data-v1-nav]').forEach(b=>b.addEventListener('click',()=>v1SetView(b.dataset.v1Nav))); container.appendChild(footer);
+}
+function renderDayNavigation(){ return; }
+
+function v1Status(session){ if(session.completed)return 'Completed'; if(session.partial)return 'Showed Up'; if(session.incomplete)return 'Incomplete'; if(session.missed)return 'Missed'; if(session.started)return 'In Progress'; return 'Not Started'; }
+function v1TodaySummary(){ const day=getActiveProgram()[getTodayKey()]; const session=getTodaySession(); return {day,session,status:v1Status(session)}; }
+
+function renderDashboard(container){
+    const {day,session,status}=v1TodaySummary(); const p=v1ActiveRecord(); const progress=getWeekProgress();
+    const archived=v1Programs().filter(x=>x.archivedAt).length + (appState.settings.archivedPrograms||[]).length;
+    const greeting=new Date().getHours()<12?'Good morning':new Date().getHours()<18?'Good afternoon':'Good evening';
+    const card=document.createElement('section'); card.className='v1-page';
+    card.innerHTML=`<div class="v1-hero"><div><span class="v1-eyebrow">GYMESSENTIALS 1.0</span><h2>${greeting}.</h2><p>Your workout app, built around <strong>programs</strong> rather than one fixed routine.</p></div><div class="v1-hero-icon">💪</div></div>
+      <div class="v1-card v1-today-hero"><div><span class="v1-label">TODAY</span><h3>${day?.icon||'📅'} ${escapeHtml(day?.name||'Rest')}</h3><p>${escapeHtml(day?.title||'No workout scheduled')} ${day?.subtitle?`• ${escapeHtml(day.subtitle)}`:''}</p><span class="v1-status ${status.toLowerCase().replace(/\s+/g,'-')}">${status}</span></div><button class="primary-button" id="v1-home-today">${session.completed||session.partial?'View Workout':session.started?'Continue Workout':'Start Workout'}</button></div>
+      <div class="v1-stat-grid"><div class="v1-stat"><span>This week</span><strong>${progress.completed}/${progress.total}</strong><small>completed</small></div><div class="v1-stat"><span>Streak</span><strong>${getCurrentStreak()}</strong><small>day${getCurrentStreak()===1?'':'s'}</small></div><div class="v1-stat"><span>Program</span><strong>${escapeHtml(p?.name||'—')}</strong><small>active</small></div></div>
+      <div class="v1-card"><div class="v1-card-heading"><div><span class="v1-label">ACTIVE PROGRAM</span><h3>${escapeHtml(p?.name||'No Program')}</h3></div><button class="secondary-button" id="v1-home-program">Open</button></div><p>${escapeHtml(p?.description||'This is the program GymEssentials is currently using.')}</p>${p?.kind==='legacy'?'<div class="v1-legacy-note">📜 Original Program — the first program GymEssentials was built around. It is now just one program in the app, not the app itself.</div>':''}</div>
+      <div class="v1-card v1-quick-grid"><button class="v1-quick" id="v1-home-programs"><span>▦</span><strong>Programs</strong><small>Create, switch, archive</small></button><button class="v1-quick" id="v1-home-library"><span>▤</span><strong>Library</strong><small>Exercises and future library</small></button><button class="v1-quick" id="v1-home-history"><span>◷</span><strong>History</strong><small>See logged workouts</small></button></div>`;
+    card.querySelector('#v1-home-today').addEventListener('click',v1GoToday); card.querySelector('#v1-home-program').addEventListener('click',()=>v1SetView('programs')); card.querySelector('#v1-home-programs').addEventListener('click',()=>v1SetView('programs')); card.querySelector('#v1-home-library').addEventListener('click',()=>v1SetView('library')); card.querySelector('#v1-home-history').addEventListener('click',()=>v1SetView('more')); container.appendChild(card);
+}
+
+function renderTodayPage(container){
+    const day=getActiveProgram()[getTodayKey()]; const wrap=document.createElement('section'); wrap.className='v1-page';
+    wrap.innerHTML=`<div class="v1-page-title"><div><span class="v1-eyebrow">TODAY</span><h2>${day?.icon||'📅'} ${escapeHtml(day?.name||'Today')}</h2><p>${escapeHtml(day?.title||'No workout scheduled')} ${day?.subtitle?`• ${escapeHtml(day.subtitle)}`:''}</p></div><button class="secondary-button" id="v1-today-options">•••</button></div>`;
+    const workoutHost=document.createElement('div'); workoutHost.className='v1-workout-host'; wrap.appendChild(workoutHost);
+    if(day) renderDay(day,workoutHost); else workoutHost.innerHTML='<div class="v1-empty">No workout is scheduled for today.</div>';
+    wrap.querySelector('#v1-today-options').addEventListener('click',()=>openDayMenu()); container.appendChild(wrap);
+}
+
+function v1ProgramCard(p){
+    const active=p.id===appState.settings.activeProgramId;
+    const archived=!!p.archivedAt;
+    return `<div class="v1-program-card ${active?'active':''} ${archived?'archived':''}"><div class="v1-program-card-top"><div><span class="v1-program-kind">${p.kind==='legacy'?'ORIGINAL PROGRAM':archived?'ARCHIVED PROGRAM':'PROGRAM'}</span><h3>${escapeHtml(p.name)}</h3><p>${escapeHtml(p.description||'Personal workout program')}</p></div>${active&&!archived?'<span class="v1-active-pill">ACTIVE</span>':''}</div><div class="v1-program-meta"><span>${Object.keys(p.days||{}).length} days</span><span>${Object.values(p.days||{}).reduce((n,d)=>n+(d.sections||[]).reduce((m,s)=>m+(s.exercises||[]).filter(e=>e.enabled!==false).length,0),0)} exercises</span>${p.source?`<span>Source: ${escapeHtml(p.source)}</span>`:''}</div><div class="v1-program-actions">${!active&&!archived?`<button class="primary-button" data-v1-activate="${escapeHtml(p.id)}">Use Program</button>`:''}${active&&!archived?`<button class="secondary-button" data-v1-open="${escapeHtml(p.id)}">Open</button><button class="secondary-button" data-v1-rename="${escapeHtml(p.id)}">Rename</button><button class="danger-button" data-v1-archive="${escapeHtml(p.id)}">Archive</button>`:''}${archived?`<button class="secondary-button" data-v1-restore="${escapeHtml(p.id)}">Restore</button>`:''}</div></div>`;
+}
+function renderProgramsPage(container){
+    const wrap=document.createElement('section'); wrap.className='v1-page'; const programs=v1Programs();
+    wrap.innerHTML=`<div class="v1-page-title"><div><span class="v1-eyebrow">PROGRAMS</span><h2>Your Programs</h2><p>GymEssentials is a platform for many programs. Your original ChatGPT routine is preserved as a normal program.</p></div><button class="primary-button" id="v1-new-program">＋ New</button></div><div class="v1-program-tools"><button class="secondary-button" id="v1-builder">Build 7-Day Program</button><button class="secondary-button" id="v1-chat-help">ChatGPT Program Help</button></div><div class="v1-program-list">${programs.filter(p=>!p.archivedAt).map(v1ProgramCard).join('')||'<div class="v1-empty">No active programs yet.</div>'}</div>${programs.some(p=>p.archivedAt)?`<div class="v1-section-heading"><h3>Archived Programs</h3><span>Available to restore</span></div><div class="v1-program-list">${programs.filter(p=>p.archivedAt).map(v1ProgramCard).join('')}</div>`:''}`;
+    wrap.querySelector('#v1-new-program').addEventListener('click',openV1NewProgram); wrap.querySelector('#v1-builder').addEventListener('click',openV1SevenDayBuilder); wrap.querySelector('#v1-chat-help').addEventListener('click',openChatGPTInstructions);
+    wrap.querySelectorAll('[data-v1-activate]').forEach(b=>b.addEventListener('click',()=>v1ActivateProgram(b.dataset.v1Activate)));
+    wrap.querySelectorAll('[data-v1-open]').forEach(b=>b.addEventListener('click',()=>{v1ActivateProgram(b.dataset.v1Open,false);v1SetView('today');}));
+    wrap.querySelectorAll('[data-v1-rename]').forEach(b=>b.addEventListener('click',()=>v1RenameProgram(b.dataset.v1Rename)));
+    wrap.querySelectorAll('[data-v1-archive]').forEach(b=>b.addEventListener('click',()=>v1ArchiveProgram(b.dataset.v1Archive)));
+    wrap.querySelectorAll('[data-v1-restore]').forEach(b=>b.addEventListener('click',()=>v1RestoreProgram(b.dataset.v1Restore)));
+    container.appendChild(wrap);
+}
+function v1ActivateProgram(id,rerender=true){ const p=v1Programs().find(x=>x.id===id); if(!p)return; if(p.archivedAt){showToast('Restore the program before activating it.');return;} v1SyncActive(); appState.activeProgramId=p.id; appState.settings.activeProgramId=p.id; appState.program=v1Clone(p.days); appState.settings.currentProgramName=p.name; appState.settings.activeView='programs'; saveApp(); if(rerender)render(); showToast(`${p.name} is now active`); }
+function v1RenameProgram(id){ const p=v1Programs().find(x=>x.id===id); if(!p)return; const name=prompt('Program name',p.name); if(!name?.trim())return; p.name=name.trim(); if(p.id===appState.settings.activeProgramId)appState.settings.currentProgramName=p.name; saveApp();render(); }
+function v1ArchiveProgram(id){ const p=v1Programs().find(x=>x.id===id); if(!p)return; if(p.id===appState.settings.activeProgramId){showToast('Choose another active program before archiving this one.');return;} p.archivedAt=new Date().toISOString(); saveApp();render();showToast('Program archived'); }
+function v1RestoreProgram(id){ const p=v1Programs().find(x=>x.id===id); if(!p)return; p.archivedAt=null; saveApp();render();showToast(`${p.name} restored`); }
+
+function openV1NewProgram(){
+    const o=document.createElement('div');o.className='modal-overlay';o.innerHTML=`<div class="large-modal program-modal"><div class="modal-header"><div><h2>Create a Program</h2><p class="modal-description">Programs are independent from the app itself. Start blank, build a 7-day plan, or import GymEssentials JSON.</p></div><button class="modal-close">×</button></div><div class="v1-choice-grid"><button class="v1-choice" id="v1-blank"><strong>＋ Blank Program</strong><span>Start with an empty weekly structure.</span></button><button class="v1-choice" id="v1-seven"><strong>▦ 7-Day Builder</strong><span>Quickly create a customizable week.</span></button><button class="v1-choice" id="v1-import"><strong>↥ Import JSON</strong><span>Use a program generated elsewhere.</span></button></div><div class="v1-import-panel hidden" id="v1-import-panel"><div class="modal-field"><label>Program name</label><input id="v1-import-name" value="My Program"></div><div class="modal-field"><label>Program JSON</label><textarea id="v1-import-json" rows="12" placeholder="Paste valid GymEssentials program JSON here..."></textarea></div><button class="primary-button" id="v1-import-save">Create Program</button></div></div>`;
+    document.body.appendChild(o);const close=()=>o.remove();o.querySelector('.modal-close').addEventListener('click',close);
+    o.querySelector('#v1-blank').addEventListener('click',()=>{const p=v1MakeProgram({name:'My Program',description:'Custom GymEssentials program',days:v1BlankDays()});v1AddProgram(p);close();});
+    o.querySelector('#v1-seven').addEventListener('click',()=>{close();openV1SevenDayBuilder();});
+    o.querySelector('#v1-import').addEventListener('click',()=>o.querySelector('#v1-import-panel').classList.toggle('hidden'));
+    o.querySelector('#v1-import-save').addEventListener('click',()=>{let raw;try{raw=JSON.parse(o.querySelector('#v1-import-json').value);}catch{showToast('Invalid JSON.');return;}const days=v1NormalizeDays(raw.days||raw.program||raw);if(!Object.keys(days).length){showToast('No valid workout days found.');return;}const p=v1MakeProgram({name:o.querySelector('#v1-import-name').value.trim()||raw.name||'My Program',days});v1AddProgram(p);close();});
+}
+function v1BlankDays(){ const names=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];const keys=['monday','tuesday','wednesday','thursday','friday','saturday','sunday'];const out={};keys.forEach((k,i)=>out[k]={id:k,name:names[i],shortName:names[i].slice(0,3).toUpperCase(),icon:'🛌',title:'Rest / Recovery',subtitle:'Easy recovery or rest',type:'recovery',sections:[{id:v1Id('section'),name:'Workout',exercises:[]}]});return out; }
+function v1AddProgram(p){ v1SyncActive(); appState.settings.programs.push(p); appState.activeProgramId=p.id; appState.settings.activeProgramId=p.id; appState.program=v1Clone(p.days); appState.settings.currentProgramName=p.name; appState.settings.activeView='programs'; saveApp();render();showToast(`${p.name} created`); }
+function openV1SevenDayBuilder(){
+    const keys=['monday','tuesday','wednesday','thursday','friday','saturday','sunday'], labels=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+    const o=document.createElement('div');o.className='modal-overlay';o.innerHTML=`<div class="large-modal program-modal"><div class="modal-header"><div><h2>Build a 7-Day Program</h2><p class="modal-description">A simple starter builder. You can fully edit the program afterward.</p></div><button class="modal-close">×</button></div><form id="v1-seven-form"><div class="modal-field"><label>Program name</label><input id="v1-seven-name" value="My 7-Day Program" required></div><div class="seven-day-builder">${keys.map((k,i)=>`<div class="seven-day-row"><div><strong>${labels[i]}</strong><span>Day ${i+1}</span></div><input data-v1-title="${k}" placeholder="Workout title"><input data-v1-exercises="${k}" placeholder="Exercises, separated by commas"></div>`).join('')}</div><div class="modal-actions"><button type="button" class="secondary-button" id="v1-seven-cancel">Cancel</button><button type="submit" class="primary-button">Create Program</button></div></form></div>`;
+    document.body.appendChild(o);const close=()=>o.remove();o.querySelector('.modal-close').addEventListener('click',close);o.querySelector('#v1-seven-cancel').addEventListener('click',close);o.addEventListener('click',e=>{if(e.target===o)close();});
+    o.querySelector('#v1-seven-form').addEventListener('submit',e=>{e.preventDefault();const days={};keys.forEach((k,i)=>{const title=o.querySelector(`[data-v1-title="${k}"]`).value.trim();const text=o.querySelector(`[data-v1-exercises="${k}"]`).value.trim();const exs=text?text.split(',').map(n=>n.trim()).filter(Boolean).map(n=>v1Exercise({id:v1Id('exercise'),name:n,target:'2 × 8–12',type:'strength'})):[];days[k]={id:k,name:labels[i],shortName:labels[i].slice(0,3).toUpperCase(),icon:title?'🏋️':'🛌',title:title||'Rest / Recovery',subtitle:title?'Custom workout':'Easy recovery or rest',type:title?'strength':'recovery',sections:[{id:v1Id('section'),name:title?'Main Workout':'Workout',exercises:exs}]};});const p=v1MakeProgram({name:o.querySelector('#v1-seven-name').value.trim()||'My 7-Day Program',description:'Built with the GymEssentials 7-Day Builder',days});v1AddProgram(p);close();});
+}
+
+function v1ExerciseLibraryData(){ const map=new Map(); Object.values(getActiveProgram()||{}).forEach(day=>(day.sections||[]).forEach(s=>(s.exercises||[]).forEach(ex=>{if(ex.enabled===false)return;if(!map.has(ex.libraryId||v1Slug(ex.name)))map.set(ex.libraryId||v1Slug(ex.name),ex);}))); return [...map.values()].sort((a,b)=>a.name.localeCompare(b.name)); }
+function renderLibraryPage(container){
+    const exs=v1ExerciseLibraryData(); const wrap=document.createElement('section');wrap.className='v1-page';
+    wrap.innerHTML=`<div class="v1-page-title"><div><span class="v1-eyebrow">LIBRARY</span><h2>Exercise Library</h2><p>The 1.0 foundation already gives exercises permanent library identities. The full illustrated library is planned for 4.0.</p></div></div><div class="v1-library-note">📚 <strong>Foundation now, full library later.</strong> These exercises are already represented as library-ready records. Future versions can add instructions, muscle maps, equipment, images and alternatives without changing your workout records.</div><input class="v1-search" id="v1-library-search" placeholder="Search exercises..."><div class="v1-library-grid" id="v1-library-grid">${exs.map(v1LibraryCard).join('')||'<div class="v1-empty">No exercises yet. Add exercises to a program and they will appear here.</div>'}</div>`;
+    const grid=wrap.querySelector('#v1-library-grid');wrap.querySelector('#v1-library-search').addEventListener('input',e=>{const q=e.target.value.toLowerCase();grid.innerHTML=exs.filter(x=>x.name.toLowerCase().includes(q)||String(x.primaryMuscle).toLowerCase().includes(q)).map(v1LibraryCard).join('')||'<div class="v1-empty">No matching exercises.</div>';});
+    grid.addEventListener('click',e=>{const b=e.target.closest('[data-v1-exercise]');if(b){const ex=exs.find(x=>(x.libraryId||v1Slug(x.name))===b.dataset.v1Exercise);if(ex)openV1ExerciseDetails(ex);}});container.appendChild(wrap);
+}
+function v1LibraryCard(ex){return `<button type="button" class="v1-library-card" data-v1-exercise="${escapeHtml(ex.libraryId||v1Slug(ex.name))}"><span class="v1-library-icon">${ex.type==='running'?'🏃':'🏋️'}</span><span><strong>${escapeHtml(ex.name)}</strong><small>${escapeHtml(ex.target||ex.primaryMuscle||'Exercise')}</small></span><span>›</span></button>`;}
+function openV1ExerciseDetails(ex){openSimpleInfoModal(ex.name,`<div class="v1-detail"><p><strong>Library ID:</strong> ${escapeHtml(ex.libraryId||v1Slug(ex.name))}</p><p><strong>Target:</strong> ${escapeHtml(ex.target||'Not specified')}</p><p><strong>Primary muscle:</strong> ${escapeHtml(ex.primaryMuscle||'To be filled by the full Exercise Library')}</p><p><strong>Equipment:</strong> ${escapeHtml((ex.equipment||[]).join(', ')||'To be filled')}</p><p><strong>Instructions:</strong> ${escapeHtml(ex.instructions||'Full instructions and images are planned for the Exercise Library release.')}</p></div>`);}
+
+function renderMorePage(container){
+    const wrap=document.createElement('section');wrap.className='v1-page';wrap.innerHTML=`<div class="v1-page-title"><div><span class="v1-eyebrow">MORE</span><h2>More</h2><p>History, data safety, settings and app information.</p></div></div><div class="v1-menu-list"><button data-v1-more="history"><span>◷</span><div><strong>Workout History</strong><small>Review logged weeks and sessions</small></div><b>›</b></button><button data-v1-more="settings"><span>⚙</span><div><strong>Settings</strong><small>Theme, units, week start and preferences</small></div><b>›</b></button><button data-v1-more="backup"><span>↕</span><div><strong>Backup & Restore</strong><small>Export a 1.0 backup or restore one</small></div><b>›</b></button><button data-v1-more="about"><span>ⓘ</span><div><strong>About GymEssentials</strong><small>Version 1.0 and beta history</small></div><b>›</b></button></div>`;
+    wrap.querySelectorAll('[data-v1-more]').forEach(b=>b.addEventListener('click',()=>{if(b.dataset.v1More==='history'){v1SetView('history');}else if(b.dataset.v1More==='settings'){openV1Settings();}else if(b.dataset.v1More==='backup'){openV1Backup();}else{openV1About();}}));container.appendChild(wrap);
+}
+function renderHistoryPage(container){
+    const host=document.createElement('section');host.className='v1-page';
+    const sessions=Object.values(appState.sessions||{}).filter(s=>s.started||hasSessionEntries(s)).sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+    host.innerHTML=`<div class="v1-page-title"><div><span class="v1-eyebrow">HISTORY</span><h2>Workout History</h2><p>Your saved workout sessions, independent from the current program.</p></div></div><div class="v1-history-list">${sessions.length?sessions.map(s=>{const day=getActiveProgram()[s.dayId]||s.workoutSnapshot||{};return `<button type="button" class="v1-history-card" data-v1-history-day="${escapeHtml(s.dayId)}" data-v1-history-date="${escapeHtml(s.date)}"><div><strong>${escapeHtml(day.icon||'📅')} ${escapeHtml(day.name||s.dayId)}</strong><span>${escapeHtml(formatDate(s.date))} • ${escapeHtml(v1Status(s))}</span></div><b>›</b></button>`}).join(''):'<div class="v1-empty">No workouts have been logged yet.</div>'}</div>`;
+    host.querySelectorAll('[data-v1-history-day]').forEach(b=>b.addEventListener('click',()=>{appState.currentDay=b.dataset.v1HistoryDay;appState.settings.activeView='today';saveApp();render();}));
+    container.appendChild(host);
+}
+function openV1Settings(){
+    const o=document.createElement('div');o.className='modal-overlay';o.innerHTML=`<div class="large-modal"><div class="modal-header"><div><h2>Settings</h2><p class="modal-description">Personalize how GymEssentials behaves.</p></div><button class="modal-close">×</button></div><div class="v1-settings-grid"><label>Theme<select id="v1-theme"><option value="night">Night</option><option value="day">Day</option><option value="oled">OLED Black</option></select></label><label>Units<select id="v1-units"><option value="imperial">Imperial</option><option value="metric">Metric</option></select></label><label>Week starts<select id="v1-week"><option value="monday">Monday</option><option value="sunday">Sunday</option><option value="saturday">Saturday</option></select></label></div><div class="modal-actions"><button class="primary-button" id="v1-settings-save">Save Settings</button></div></div>`;document.body.appendChild(o);const close=()=>o.remove();o.querySelector('.modal-close').addEventListener('click',close);o.querySelector('#v1-theme').value=appState.settings.theme;o.querySelector('#v1-units').value=appState.settings.unitSystem;o.querySelector('#v1-week').value=appState.settings.weekStartDay||'monday';o.querySelector('#v1-settings-save').addEventListener('click',()=>{appState.settings.theme=o.querySelector('#v1-theme').value;appState.settings.unitSystem=o.querySelector('#v1-units').value;appState.settings.weekStartDay=o.querySelector('#v1-week').value;saveApp();close();render();}); }
+function openV1Backup(){
+    const o=document.createElement('div');o.className='modal-overlay';o.innerHTML=`<div class="large-modal"><div class="modal-header"><div><h2>Backup & Restore</h2><p class="modal-description">1.0 uses a versioned backup format designed for future migrations.</p></div><button class="modal-close">×</button></div><div class="v1-backup-box"><div><strong>Export</strong><span>Creates a complete GymEssentials 1.0 JSON backup.</span></div><button class="primary-button" id="v1-export">Export Backup</button></div><div class="v1-backup-box"><div><strong>Import</strong><span>Replaces current 1.0 data after showing a confirmation summary.</span></div><button class="secondary-button" id="v1-import">Import Backup</button><input type="file" id="v1-backup-file" accept=".json" hidden></div><div class="v1-warning">Beta note: 1.0 intentionally uses its own clean data namespace. Your old 3.6 beta data is not automatically imported.</div></div>`;document.body.appendChild(o);const close=()=>o.remove();o.querySelector('.modal-close').addEventListener('click',close);o.querySelector('#v1-export').addEventListener('click',()=>{v1ExportBackup();});o.querySelector('#v1-import').addEventListener('click',()=>o.querySelector('#v1-backup-file').click());o.querySelector('#v1-backup-file').addEventListener('change',e=>v1ImportBackup(e.target.files[0],close)); }
+function v1ExportBackup(){ v1SyncActive(); const backup={format:'GymEssentials Backup',backupVersion:BACKUP_FORMAT_VERSION,appVersion:APP_VERSION,dataSchemaVersion:DATA_SCHEMA_VERSION,exportedAt:new Date().toISOString(),data:v1Clone(appState)};const blob=new Blob([JSON.stringify(backup,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`gymessentials-backup-v1-${getDateKey()}.json`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);showToast('1.0 backup exported'); }
+function v1ImportBackup(file,close){if(!file)return;const r=new FileReader();r.onload=()=>{try{const b=JSON.parse(r.result);if(!b.data||b.data.schemaVersion!==DATA_SCHEMA_VERSION)throw new Error('Wrong backup version');const sessions=Object.keys(b.data.sessions||{}).length;const programs=(b.data.settings?.programs||[]).length;if(!confirm(`GymEssentials 1.0 backup\nCreated: ${b.exportedAt?new Date(b.exportedAt).toLocaleString():'Unknown'}\nPrograms: ${programs}\nWorkout sessions: ${sessions}\n\nReplace current 1.0 data?`))return;localStorage.setItem(V1_STORAGE_KEY,JSON.stringify(b.data));close();location.reload();}catch(e){console.error(e);alert('That backup is not a valid GymEssentials 1.0 backup. No data was changed.');}};r.readAsText(file);}
+function openV1About(){openSimpleInfoModal('About GymEssentials',`<div class="v1-about"><div class="v1-about-logo">GE</div><h3>GymEssentials 1.0</h3><p>This is the first true product release after the 3.0–3.6 beta development period.</p><p><strong>Architecture:</strong> programs are independent objects; workout sessions are separate records; exercises have permanent library identities; the app is no longer defined by one workout program.</p><h4>Beta history</h4><p>3.0–3.6 remain preserved as the historical beta versions that led to 1.0.</p></div>`);}
+
+function openDayMenu(){
+    const dayId=appState.currentDay,isToday=dayId===getTodayKey(),session=getSession(dayId);const o=document.createElement('div');o.className='modal-overlay';o.innerHTML=`<div class="action-sheet"><div class="action-sheet-title">Workout Options</div><button data-v1-action="edit">✏️ Edit Workout</button><button data-v1-action="replace">🔄 Replace Workout</button><button data-v1-action="share">↗ Share Workout</button>${isToday&&session.started&&!session.completed&&!session.partial?'<button data-v1-action="complete">✓ Complete Workout</button>':''}<button data-v1-action="settings">⚙ Settings</button><button data-v1-action="cancel" class="cancel-action">Cancel</button></div>`;document.body.appendChild(o);o.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;const a=b.dataset.v1Action;o.remove();if(a==='edit')enterWorkoutEditMode(dayId);else if(a==='replace')openReplaceWorkoutMenu(dayId);else if(a==='share')shareDayWorkoutImage(dayId,isToday?getDateKey():getDateKeyForDayId(dayId));else if(a==='complete')completeSession(dayId);else if(a==='settings')openV1Settings();});}
+
+function applyWorkoutDraft(dayId,draft,scope){
+    const day=getActiveProgram()[dayId]; if(!day)return; const isToday=dayId===getTodayKey(); const dateKey=isToday?getDateKey():getDateKeyForDayId(dayId); const session=getSession(dayId,dateKey);
+    if(scope==='future'){getActiveProgram()[dayId]=copyWorkoutContent(draft,day);if(isToday&&!session.started){session.workoutSnapshot=deepClone(getActiveProgram()[dayId]);session.replacementDayId=null;} v1SyncActive();showToast('Workout plan changes saved');}
+    else if(scope==='today'&&isToday){session.workoutSnapshot=deepClone(draft);session.replacementDayId=null;showToast("Today's workout changed");}
+    else if(scope==='day'){session.workoutSnapshot=deepClone(draft);session.replacementDayId=null;showToast('This scheduled workout changed');}
+    appState.settings.weightEntryMode=false;appState.settings.weightEntryDayId=null;appState.settings.weightEntryDateKey=null;appState.settings.editingWorkout=false;appState.settings.workoutDraft=null;appState.settings.workoutDraftDayId=null;saveApp();render();
+}
+
+function archiveCurrentProgram(showMessage=true){ const p=v1ActiveRecord(); if(!p)return null; p.archivedAt=new Date().toISOString(); v1SyncActive(); if(showMessage){saveApp();render();showToast('Program archived');} return p; }
+function restoreArchivedProgram(id){v1RestoreProgram(id);}
+function getActiveProgramName(){return getProgramName();}
+
+function render(){
+    const app=document.getElementById('app');if(!app)return;app.innerHTML='';applyTheme();renderHeader(app);
+    const content=document.createElement('main');content.className='v1-main';
+    const view=appState.settings.activeView;
+    if(view==='home')renderDashboard(content); else if(view==='today')renderTodayPage(content); else if(view==='programs')renderProgramsPage(content); else if(view==='library')renderLibraryPage(content); else if(view==='history')renderHistoryPage(content); else renderMorePage(content);
+    app.appendChild(content);renderBottomNavigation(app);reconcileMissedDays();updateDocumentTitle();
+}
+
+/* Keep the original 3.6 workout engine intact underneath the new 1.0 shell. */
+document.addEventListener('DOMContentLoaded',()=>{loadApp();render();registerServiceWorker();console.log('GymEssentials 1.0');});
